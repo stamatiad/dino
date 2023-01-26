@@ -23,6 +23,14 @@ num_features = model_cached.embed_dim
 model = VisionTransformer(embed_dim=num_features)
 model.load_state_dict(model_cached.state_dict(), strict=False)
 
+# Enable evaluation mode:
+device = torch.device("cpu")
+for p in model.parameters():
+    p.requires_grad = False
+model.eval()
+model.to(device)
+
+
 # Get some model params, required for VI:
 vi.params["num_layers"] = len(model.blocks)
 vi.params["num_heads"] = model.blocks[0].attn.num_heads
@@ -34,13 +42,6 @@ img_size_in_patches = crop_size // patch_size
 vi.params["len_in_patches"] = img_size_in_patches
 # Total patches in the image:
 vi.params["num_tokens"] = img_size_in_patches ** 2
-
-# Enable evaluation mode:
-device = torch.device("cpu")
-for p in model.parameters():
-    p.requires_grad = False
-model.eval()
-model.to(device)
 
 # Load sample images:
 with open('img.png', 'rb') as f:
