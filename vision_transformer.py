@@ -23,6 +23,70 @@ import torch.nn as nn
 
 from utils import trunc_normal_
 
+# VI imports:
+from functools import wraps
+import numpy as np
+import json
+import tensorflow as tf
+from vit_inspect import vit_inspector as vi
+from vit_inspect.summary_v2 import vi_summary
+
+def save_attn_weights():
+    # Zero indexed layer counter:
+    layer_counter = 0
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kw):
+            # Get access to the variable:
+            nonlocal layer_counter
+            try:
+                # Evaluate the attention function first:
+                x, w = func(*args, **kw)
+                # If we are recording with VI:
+                if vi._summary_is_active:
+                    # Number of tokens:
+                    nt = vi.params["num_tokens"]
+                    # Patch size
+                    ps = int(np.sqrt(nt))
+                    # Attention heads:
+                    ah = vi.params["num_heads"]
+                    # Remove class dim and partition into image patches.
+                    tmp = w[:, :, :nt, :nt].reshape(-1, ah, nt, ps, ps)
+                    # Preprocess to image with cmap, in order to save with
+                    # images TF writer.
+                    attn_maps = vi.maps_to_imgs(tmp)
+                    batch_id = vi.params["batch_id"]
+                    num_layers = vi.params["num_layers"]
+                    #Get active layer to add to the summary tag:
+                    active_layer = np.mod(layer_counter, num_layers)
+
+                    # Convert to TF tensor, to save with summary writer:
+                    flat_arr_w = tf.convert_to_tensor(
+                        np.reshape(attn_maps, [-1, *attn_maps.shape[-3:]])
+                    )
+
+                    with vi.writer.as_default():
+                        vi_summary(
+                            f"b{batch_id}l{active_layer}",
+                            flat_arr_w,
+                            step=vi.params["step"],
+                            # Provide all the relevant model params to the TB
+                            # plugin:
+                            description=json.dumps(vi.params)
+                        )
+                        vi.writer.flush()
+
+                    # Increment the layer counter, keeping track for the
+                    # active layer.
+                    layer_counter += 1
+            except Exception as e:
+                print(f"Something in JAX broke: {e}")
+                raise e
+            # Return the results of the attention function that we called
+            # earlier:
+            return x, w #=func(*args, **kw)
+        return wrapper
+    return decorator
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     if drop_prob == 0. or not training:
@@ -77,6 +141,7 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+    @save_attn_weights()
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
