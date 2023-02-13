@@ -51,7 +51,9 @@ def save_attn_weights():
                     # Attention heads:
                     ah = vi.params["num_heads"]
                     # Remove class dim and partition into image patches.
-                    tmp = w[:, :, :nt, :nt].reshape(-1, ah, nt, ps, ps)
+                    tmp = np.asarray(
+                        w[:, :, :nt, :nt].reshape(-1, ah, nt, ps, ps)
+                    )
                     # Preprocess to image with cmap, in order to save with
                     # images TF writer.
                     attn_maps = vi.maps_to_imgs(tmp)
